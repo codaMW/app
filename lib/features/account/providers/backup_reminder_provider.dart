@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,8 +22,8 @@ const kBackupSnoozedUntilKey = 'backupSnoozedUntilMillis';
 /// Dismissed permanently after `confirmBackupComplete()` is called.
 final backupReminderProvider =
     StateNotifierProvider<BackupReminderNotifier, bool>(
-  (ref) => BackupReminderNotifier(),
-);
+      (ref) => BackupReminderNotifier(),
+    );
 
 /// Whether the user has ever completed a backup of the current identity.
 ///
@@ -30,8 +31,8 @@ final backupReminderProvider =
 /// identity is generated or imported.
 final backupCompletedProvider =
     StateNotifierProvider<BackupCompletedNotifier, bool>(
-  (ref) => BackupCompletedNotifier(),
-);
+      (ref) => BackupCompletedNotifier(),
+    );
 
 class BackupReminderNotifier extends StateNotifier<bool> {
   /// When [initialValue] is provided the notifier starts with the correct
@@ -122,13 +123,13 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
     Future<bool> Function()? getConfirmed,
     Future<void> Function(bool confirmed)? setConfirmed,
     Future<void> Function()? resetConfirmed,
-  })  : _getConfirmed = getConfirmed ?? identity_api.getBackupConfirmed,
-        _setConfirmed = setConfirmed ??
-            ((confirmed) =>
-                identity_api.setBackupConfirmed(confirmed: confirmed)),
-        _resetConfirmed =
-            resetConfirmed ?? identity_api.resetBackupConfirmation,
-        super(initialValue ?? false) {
+  }) : _getConfirmed = getConfirmed ?? identity_api.getBackupConfirmed,
+       _setConfirmed =
+           setConfirmed ??
+           ((confirmed) =>
+               identity_api.setBackupConfirmed(confirmed: confirmed)),
+       _resetConfirmed = resetConfirmed ?? identity_api.resetBackupConfirmation,
+       super(initialValue ?? false) {
     if (initialValue == null) {
       load();
     } else {
@@ -152,30 +153,47 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
     // first run after upgrading, copy the legacy SharedPreferences value into
     // Rust once, then read from Rust exclusively.
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final migrated = prefs.getBool(_kMigratedKey) ?? false;
-      if (!migrated) {
-        // Legacy installs only have the dismissed flag, which was set
-        // exclusively by the explicit "I have written down my secret words"
-        // confirmation — treat it as a completed backup.
-        final legacy = prefs.getBool(kBackupCompletedKey) ??
-            prefs.getBool(kBackupReminderDismissedKey) ??
-            false;
-        if (legacy) {
-          // Best-effort: if no identity is loaded yet, the bridge throws and we
-          // simply leave Rust at its default (false); the reminder stays armed,
-          // which is safe. The migration flag is only set once the copy sticks.
-          await _setConfirmed(true);
+      // #141 review: skip the migration entirely on web. There, initDb is
+      // never called (main.dart guards it with !kIsWeb), so set_backup_confirmed
+      // has no store and returns Ok WITHOUT persisting. Running the migration
+      // would burn the durable _kMigratedKey (localStorage) against that
+      // non-durable write, consuming the legacy SharedPreferences value and
+      // re-arming the reminder on every reload. Until IndexedDB save_identity
+      // lands (#233), the legacy SharedPreferences flag stays authoritative on
+      // web, so we neither migrate nor mark it migrated.
+      if (!kIsWeb) {
+        final prefs = await SharedPreferences.getInstance();
+        final migrated = prefs.getBool(_kMigratedKey) ?? false;
+        if (!migrated) {
+          // Legacy installs only have the dismissed flag, which was set
+          // exclusively by the explicit "I have written down my secret words"
+          // confirmation — treat it as a completed backup.
+          final legacy =
+              prefs.getBool(kBackupCompletedKey) ??
+              prefs.getBool(kBackupReminderDismissedKey) ??
+              false;
+          if (legacy) {
+            // Best-effort: if no identity is loaded yet, the bridge throws and
+            // we simply leave Rust at its default (false); the reminder stays
+            // armed, which is safe. The marker is only set once the copy
+            // sticks — and on native the write is always durable here.
+            await _setConfirmed(true);
+          }
+          await prefs.setBool(_kMigratedKey, true);
         }
-        await prefs.setBool(_kMigratedKey, true);
       }
       state = await _getConfirmed();
-    } catch (_) {
+      // Only mark loaded once the Rust read succeeded. If the bridge was not
+      // ready (no identity yet), leaving _loaded false lets the next load()
+      // retry instead of pinning the UI to `false` for the whole session.
+      _loaded = true;
+    } catch (e) {
       // Rust unavailable (e.g. no identity yet, or tests without the bridge):
-      // fall back to unconfirmed so the reminder stays armed.
+      // fall back to unconfirmed so the reminder stays armed, and let a later
+      // load() retry (we deliberately do NOT set _loaded here).
+      debugPrint('[backup] load() failed, reminder stays armed: $e');
       state = false;
     }
-    _loaded = true;
   }
 
   /// Persist that the current identity has been backed up (Rust identity

@@ -44,11 +44,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
 
       if (!mounted) return;
       if (words.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.noIdentityFoundMessage),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.noIdentityFoundMessage)));
         return;
       }
       final backupPending = ref.read(backupReminderProvider);
@@ -79,8 +77,12 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   Future<void> _confirmBackup() async {
     final l10n = AppLocalizations.of(context);
     try {
-      await ref.read(backupReminderProvider.notifier).confirmBackupComplete();
+      // Authoritative Rust write first; only dismiss the reminder locally once
+      // it succeeds. If markCompleted() throws, the catch below fires before the
+      // permanent local dismissal, keeping the reminder armed and consistent
+      // with backup_confirmed=false. (#141 review)
       await ref.read(backupCompletedProvider.notifier).markCompleted();
+      await ref.read(backupReminderProvider.notifier).confirmBackupComplete();
       if (mounted) setState(() => _showBackupCheckbox = false);
     } catch (e) {
       debugPrint('[account] _confirmBackup error: $e');
@@ -122,9 +124,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
           // ── Backup ritual banner — entry point for the 3-step backup
           // flow while the backup reminder is active.
           if (backupPending) ...[
-            _BackupRitualBanner(
-              onTap: () => showBackupTriggerSheet(context),
-            ),
+            _BackupRitualBanner(onTap: () => showBackupTriggerSheet(context)),
             const SizedBox(height: AppSpacing.lg),
           ],
 
@@ -205,7 +205,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                                     color: green,
                                   ),
                                   label: Text(
-                                    _wordsVisible ? l10n.hideButtonLabel : l10n.showButtonLabel,
+                                    _wordsVisible
+                                        ? l10n.hideButtonLabel
+                                        : l10n.showButtonLabel,
                                     style: TextStyle(color: green),
                                   ),
                                 ),
@@ -442,9 +444,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            kDebugMode
-                ? 'Import failed: $e'
-                : l10n.invalidMnemonicMessage,
+            kDebugMode ? 'Import failed: $e' : l10n.invalidMnemonicMessage,
           ),
         ),
       );
@@ -545,10 +545,7 @@ class _CardHeader extends StatelessWidget {
             context,
           ).textTheme.titleMedium!.copyWith(fontWeight: FontWeight.w600),
         ),
-        if (badge != null) ...[
-          const SizedBox(width: AppSpacing.sm),
-          badge!,
-        ],
+        if (badge != null) ...[const SizedBox(width: AppSpacing.sm), badge!],
         const Spacer(),
         IconButton(
           onPressed: onInfo,
@@ -610,8 +607,9 @@ class _BackupRitualBanner extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       l10n.backupBannerSubtitle,
-                      style:
-                          theme.textTheme.bodySmall!.copyWith(color: textSec),
+                      style: theme.textTheme.bodySmall!.copyWith(
+                        color: textSec,
+                      ),
                     ),
                   ],
                 ),

@@ -312,6 +312,16 @@ pub async fn get_backup_confirmed() -> Result<bool> {
 /// reminder re-appears next launch, which fails safe. A redundant write is
 /// skipped so confirming twice does not touch storage.
 pub async fn set_backup_confirmed(confirmed: bool) -> Result<()> {
+    set_backup_confirmed_with(crate::db::app_db::db(), confirmed).await
+}
+
+/// [`set_backup_confirmed`] against an explicit store, so the persist-then-
+/// commit sequence is testable with an injected failing store without touching
+/// the global singleton (mirrors [`derive_trade_key_with`]).
+async fn set_backup_confirmed_with<S: Storage>(
+    db: Option<&S>,
+    confirmed: bool,
+) -> Result<()> {
     let mut guard = identity_lock().write().await;
     let state = guard.as_mut().ok_or_else(|| anyhow!("NoIdentity"))?;
     if state.identity_info.backup_confirmed == confirmed {
@@ -325,7 +335,7 @@ pub async fn set_backup_confirmed(confirmed: bool) -> Result<()> {
     // commit discipline as the trade_key_index path (#217).
     let mut updated = state.identity_info.clone();
     updated.backup_confirmed = confirmed;
-    if let Some(db) = crate::db::app_db::db() {
+    if let Some(db) = db {
         db.save_identity(&updated).await.map_err(|e| {
             anyhow!("StorageError: failed to persist backup_confirmed={confirmed}: {e}")
         })?;
@@ -674,6 +684,145 @@ mod tests {
         (tx, TradeKeyIndexStream { rx })
     }
 
+    /// A `Storage` whose `save_identity` always fails, for exercising the
+    /// persist-then-commit path with an injected failure. The seams under test
+    /// only call `save_identity`, so every other method is `unimplemented!()` —
+    /// reaching one would be a test bug, not silent success.
+    struct FailingStore;
+
+    impl Storage for FailingStore {
+        async fn save_identity(&self, _identity: &IdentityInfo) -> Result<()> {
+            anyhow::bail!("injected save failure")
+        }
+        async fn save_order(&self, _order: &crate::api::types::OrderInfo) -> Result<()> {
+            unimplemented!()
+        }
+        async fn get_order(&self, _id: &str) -> Result<Option<crate::api::types::OrderInfo>> {
+            unimplemented!()
+        }
+        async fn delete_order(&self, _id: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn list_orders(&self) -> Result<Vec<crate::api::types::OrderInfo>> {
+            unimplemented!()
+        }
+        async fn save_trade(&self, _trade: &crate::api::types::TradeInfo) -> Result<()> {
+            unimplemented!()
+        }
+        async fn get_trade(&self, _id: &str) -> Result<Option<crate::api::types::TradeInfo>> {
+            unimplemented!()
+        }
+        async fn list_trades(&self) -> Result<Vec<crate::api::types::TradeInfo>> {
+            unimplemented!()
+        }
+        async fn save_message(&self, _msg: &crate::api::types::ChatMessage) -> Result<()> {
+            unimplemented!()
+        }
+        async fn list_messages(
+            &self,
+            _trade_id: &str,
+        ) -> Result<Vec<crate::api::types::ChatMessage>> {
+            unimplemented!()
+        }
+        async fn mark_messages_read(&self, _trade_id: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn message_exists(&self, _id: &str) -> Result<bool> {
+            unimplemented!()
+        }
+        async fn save_relay(&self, _relay: &crate::api::types::RelayInfo) -> Result<()> {
+            unimplemented!()
+        }
+        async fn delete_relay(&self, _url: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn list_relays(&self) -> Result<Vec<crate::api::types::RelayInfo>> {
+            unimplemented!()
+        }
+        async fn get_identity(&self) -> Result<Option<IdentityInfo>> {
+            unimplemented!()
+        }
+        async fn delete_identity(&self) -> Result<()> {
+            unimplemented!()
+        }
+        async fn save_queued_message(
+            &self,
+            _msg: &crate::queue::outbox::QueuedMessage,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+        async fn list_queued_messages(
+            &self,
+        ) -> Result<Vec<crate::queue::outbox::QueuedMessage>> {
+            unimplemented!()
+        }
+        async fn update_queued_message_status(
+            &self,
+            _id: &str,
+            _status: crate::api::types::QueuedMessageStatus,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+        async fn delete_queued_message(&self, _id: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn save_trade_key(&self, _order_id: &str, _key_index: u32) -> Result<()> {
+            unimplemented!()
+        }
+        async fn get_trade_key(&self, _order_id: &str) -> Result<Option<u32>> {
+            unimplemented!()
+        }
+        async fn get_order_id_by_trade_index(&self, _key_index: u32) -> Result<Option<String>> {
+            unimplemented!()
+        }
+        async fn delete_trade_key(&self, _order_id: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn clear_trade_keys(&self) -> Result<()> {
+            unimplemented!()
+        }
+        async fn get_setting(&self, _key: &str) -> Result<Option<String>> {
+            unimplemented!()
+        }
+        async fn set_setting(&self, _key: &str, _value: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn delete_setting(&self, _key: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn save_active_mostro_pubkey(&self, _pubkey: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn get_active_mostro_pubkey(&self) -> Result<Option<String>> {
+            unimplemented!()
+        }
+        async fn get_trade_by_order_id(
+            &self,
+            _order_id: &str,
+        ) -> Result<Option<crate::api::types::TradeInfo>> {
+            unimplemented!()
+        }
+        async fn delete_trade_by_order_id(&self, _order_id: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn update_trade_order_id(
+            &self,
+            _old_order_id: &str,
+            _new_order_id: &str,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+        async fn update_trade_fields(
+            &self,
+            _order_id: &str,
+            _status: Option<crate::api::types::OrderStatus>,
+            _hold_invoice: Option<String>,
+            _amount_sats: Option<u64>,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+    }
+
     #[test]
     fn deriving_without_durable_storage_is_refused() {
         // Asserted as a pure decision, not through `derive_trade_key`: that
@@ -816,6 +965,46 @@ mod tests {
 
         let current = get_identity().await.unwrap().unwrap();
         assert_eq!(current.trade_key_index, 22);
+
+        // ── #141 set_backup_confirmed: persist-then-commit under a failing store ──
+        // Kept in this one identity_lock test on purpose: a separate #[tokio::test]
+        // touching the singleton would race this one. The identity loaded above
+        // starts unconfirmed.
+        assert!(!current.backup_confirmed);
+        // (1) A failing store errors with the StorageError marker and leaves the
+        // in-memory flag unchanged — the persist happens before the commit, so a
+        // save failure never flips it (pins commit 6cb67f7).
+        let backup_err = set_backup_confirmed_with(Some(&FailingStore), true)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            backup_err.contains("StorageError:"),
+            "unexpected error: {backup_err}"
+        );
+        assert!(
+            !get_identity().await.unwrap().unwrap().backup_confirmed,
+            "a failed persist must not flip the in-memory backup flag",
+        );
+        // (2) Retry against the working store writes: the `== confirmed`
+        // short-circuit was not poisoned by a half-applied mutation.
+        set_backup_confirmed_with(Some(&db), true).await.unwrap();
+        assert!(
+            get_identity().await.unwrap().unwrap().backup_confirmed,
+            "retry against a working store must persist the backup flag",
+        );
+        assert!(
+            db.get_identity().await.unwrap().unwrap().backup_confirmed,
+            "the working store must hold the confirmed flag durably",
+        );
+        // reset_backup_confirmation() re-arms the reminder by flipping the flag
+        // back (it delegates to set_backup_confirmed(false)); with an identity
+        // loaded it is not the early-return no-op path.
+        reset_backup_confirmation().await.unwrap();
+        assert!(
+            !get_identity().await.unwrap().unwrap().backup_confirmed,
+            "reset_backup_confirmation must clear the in-memory flag",
+        );
 
         crate::api::logging::forward_log(log::Level::Info, "identity_probe", "before delete");
 

@@ -107,9 +107,7 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
       if (words.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              AppLocalizations.of(context).noIdentityFoundMessage,
-            ),
+            content: Text(AppLocalizations.of(context).noIdentityFoundMessage),
           ),
         );
         Navigator.of(context).pop();
@@ -213,8 +211,12 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
     if (!_allCorrect || _confirming) return;
     setState(() => _confirming = true);
     try {
-      await ref.read(backupReminderProvider.notifier).confirmBackupComplete();
+      // Authoritative Rust write first; only dismiss the reminder locally once
+      // it succeeds. If markCompleted() throws, the catch below fires before the
+      // permanent local dismissal, keeping the reminder armed and consistent
+      // with backup_confirmed=false. (#141 review)
       await ref.read(backupCompletedProvider.notifier).markCompleted();
+      await ref.read(backupReminderProvider.notifier).confirmBackupComplete();
       if (mounted) setState(() => _step = 2);
     } catch (e) {
       debugPrint('[backup-ritual] confirm error: $e');
@@ -264,17 +266,18 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
       appBar: AppBar(
         title: Text(title, style: const TextStyle(fontSize: 15)),
         automaticallyImplyLeading: false,
-        leading: _step == 2
-            ? null
-            : BackButton(
-                onPressed: () {
-                  if (_step == 1) {
-                    _backToWords();
-                  } else {
-                    Navigator.of(context).pop();
-                  }
-                },
-              ),
+        leading:
+            _step == 2
+                ? null
+                : BackButton(
+                  onPressed: () {
+                    if (_step == 1) {
+                      _backToWords();
+                    } else {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                ),
       ),
       body: SafeArea(
         child: Padding(
@@ -324,117 +327,125 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Amber warning card
-        Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.md,
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.md,
+            ),
+            decoration: BoxDecoration(
+              color: amber.withValues(alpha: 0.12),
+              border: Border.all(color: amber.withValues(alpha: 0.27)),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber_rounded, color: amber, size: 20),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      text: l10n.backupRitualWarningTitle,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                      children: [
+                        TextSpan(
+                          text: l10n.backupRitualWarningBody,
+                          style: const TextStyle(fontWeight: FontWeight.w400),
+                        ),
+                      ],
+                    ),
+                    style: theme.textTheme.bodySmall!.copyWith(
+                      color: amber,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          decoration: BoxDecoration(
-            color: amber.withValues(alpha: 0.12),
-            border: Border.all(color: amber.withValues(alpha: 0.27)),
-            borderRadius: BorderRadius.circular(AppRadius.card),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.warning_amber_rounded, color: amber, size: 20),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    text: l10n.backupRitualWarningTitle,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+          const SizedBox(height: AppSpacing.md),
+
+          // Words grid card
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            decoration: BoxDecoration(
+              color: cardBg,
+              borderRadius: BorderRadius.circular(AppRadius.card),
+            ),
+            child: Column(
+              children: [
+                for (var row = 0; row < (words.length + 1) ~/ 2; row++) ...[
+                  if (row > 0) const SizedBox(height: AppSpacing.sm),
+                  Row(
                     children: [
-                      TextSpan(
-                        text: l10n.backupRitualWarningBody,
-                        style: const TextStyle(fontWeight: FontWeight.w400),
+                      for (var col = 0; col < 2; col++) ...[
+                        if (col > 0) const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child:
+                              row * 2 + col < words.length
+                                  ? _WordCell(
+                                    index: row * 2 + col,
+                                    word: words[row * 2 + col],
+                                    background: elevated,
+                                    indexColor: textSubtle,
+                                  )
+                                  : const SizedBox.shrink(),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.md),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSpacing.sm + 2),
+                  decoration: BoxDecoration(
+                    color: elevated,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.visibility_off_outlined,
+                        size: 14,
+                        color: textSec,
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Flexible(
+                        child: Text(
+                          l10n.wordsHiddenOnLeaveNote,
+                          style: theme.textTheme.bodySmall!.copyWith(
+                            color: textSec,
+                            fontSize: 12,
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                  style: theme.textTheme.bodySmall!
-                      .copyWith(color: amber, height: 1.5),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSpacing.md),
-
-        // Words grid card
-        Container(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          decoration: BoxDecoration(
-            color: cardBg,
-            borderRadius: BorderRadius.circular(AppRadius.card),
-          ),
-          child: Column(
-            children: [
-              for (var row = 0; row < (words.length + 1) ~/ 2; row++) ...[
-                if (row > 0) const SizedBox(height: AppSpacing.sm),
-                Row(
-                  children: [
-                    for (var col = 0; col < 2; col++) ...[
-                      if (col > 0) const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: row * 2 + col < words.length
-                            ? _WordCell(
-                                index: row * 2 + col,
-                                word: words[row * 2 + col],
-                                background: elevated,
-                                indexColor: textSubtle,
-                              )
-                            : const SizedBox.shrink(),
-                      ),
-                    ],
-                  ],
                 ),
               ],
-              const SizedBox(height: AppSpacing.md),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(AppSpacing.sm + 2),
-                decoration: BoxDecoration(
-                  color: elevated,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.visibility_off_outlined,
-                        size: 14, color: textSec),
-                    const SizedBox(width: AppSpacing.xs),
-                    Flexible(
-                      child: Text(
-                        l10n.wordsHiddenOnLeaveNote,
-                        style: theme.textTheme.bodySmall!
-                            .copyWith(color: textSec, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const Spacer(),
-
-        FilledButton.icon(
-          onPressed: _startVerification,
-          icon: Text(
-            l10n.wroteThemDownVerifyButton,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-          ),
-          label: const Icon(Icons.arrow_forward, size: 18),
-          style: FilledButton.styleFrom(
-            backgroundColor: green,
-            foregroundColor: Colors.black,
-            minimumSize: const Size.fromHeight(54),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
             ),
           ),
-        ),
+
+          const Spacer(),
+
+          FilledButton.icon(
+            onPressed: _startVerification,
+            icon: Text(
+              l10n.wroteThemDownVerifyButton,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+            label: const Icon(Icons.arrow_forward, size: 18),
+            style: FilledButton.styleFrom(
+              backgroundColor: green,
+              foregroundColor: Colors.black,
+              minimumSize: const Size.fromHeight(54),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -461,14 +472,17 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
           const SizedBox(height: AppSpacing.sm),
           Text(
             l10n.tapCorrectWordsTitle,
-            style: theme.textTheme.titleLarge!
-                .copyWith(fontWeight: FontWeight.w700),
+            style: theme.textTheme.titleLarge!.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
             l10n.verifyInstructionsBody,
-            style:
-                theme.textTheme.bodySmall!.copyWith(color: textSec, height: 1.5),
+            style: theme.textTheme.bodySmall!.copyWith(
+              color: textSec,
+              height: 1.5,
+            ),
           ),
           const SizedBox(height: AppSpacing.md),
 
@@ -516,17 +530,20 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
                   for (var col = 0; col < 2; col++) ...[
                     if (col > 0) const SizedBox(width: AppSpacing.sm),
                     Expanded(
-                      child: row * 2 + col < _options.length
-                          ? _OptionButton(
-                              word: _options[row * 2 + col],
-                              isWrong: _options[row * 2 + col] == _wrongPick,
-                              cardBg: cardBg,
-                              red: red,
-                              borderColor: textDisabled.withValues(alpha: 0.4),
-                              onTap: () =>
-                                  _onOptionTap(_options[row * 2 + col]),
-                            )
-                          : const SizedBox.shrink(),
+                      child:
+                          row * 2 + col < _options.length
+                              ? _OptionButton(
+                                word: _options[row * 2 + col],
+                                isWrong: _options[row * 2 + col] == _wrongPick,
+                                cardBg: cardBg,
+                                red: red,
+                                borderColor: textDisabled.withValues(
+                                  alpha: 0.4,
+                                ),
+                                onTap:
+                                    () => _onOptionTap(_options[row * 2 + col]),
+                              )
+                              : const SizedBox.shrink(),
                     ),
                   ],
                 ],
@@ -536,8 +553,10 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
               const SizedBox(height: AppSpacing.sm),
               Text(
                 l10n.wrongPickMessage,
-                style: theme.textTheme.bodySmall!
-                    .copyWith(color: red, fontSize: 12),
+                style: theme.textTheme.bodySmall!.copyWith(
+                  color: red,
+                  fontSize: 12,
+                ),
               ),
             ],
           ] else ...[
@@ -571,7 +590,10 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
                   ),
                   child: Text(
                     l10n.showWordsAgainButton,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -589,19 +611,20 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
                       borderRadius: BorderRadius.circular(AppRadius.card),
                     ),
                   ),
-                  child: _confirming
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text(
-                          l10n.confirmButtonLabel,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
+                  child:
+                      _confirming
+                          ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : Text(
+                            l10n.confirmButtonLabel,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
                 ),
               ),
             ],
@@ -622,47 +645,52 @@ class _BackupRitualScreenState extends ConsumerState<BackupRitualScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-        const Spacer(),
-        Center(
-          child: Container(
-            width: 112,
-            height: 112,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: green.withValues(alpha: 0.15),
-            ),
-            child: Icon(Icons.check_rounded, size: 64, color: green),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.xl),
-        Text(
-          l10n.accountBackedUpTitle,
-          textAlign: TextAlign.center,
-          style:
-              theme.textTheme.titleLarge!.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Text(
-          l10n.accountBackedUpBody,
-          textAlign: TextAlign.center,
-          style:
-              theme.textTheme.bodyMedium!.copyWith(color: textSec, height: 1.5),
-        ),
-        const Spacer(),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
-          style: FilledButton.styleFrom(
-            backgroundColor: green,
-            foregroundColor: Colors.black,
-            minimumSize: const Size.fromHeight(54),
-            textStyle:
-                const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
+          const Spacer(),
+          Center(
+            child: Container(
+              width: 112,
+              height: 112,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: green.withValues(alpha: 0.15),
+              ),
+              child: Icon(Icons.check_rounded, size: 64, color: green),
             ),
           ),
-          child: Text(l10n.done),
-        ),
+          const SizedBox(height: AppSpacing.xl),
+          Text(
+            l10n.accountBackedUpTitle,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleLarge!.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            l10n.accountBackedUpBody,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium!.copyWith(
+              color: textSec,
+              height: 1.5,
+            ),
+          ),
+          const Spacer(),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            style: FilledButton.styleFrom(
+              backgroundColor: green,
+              foregroundColor: Colors.black,
+              minimumSize: const Size.fromHeight(54),
+              textStyle: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: Text(l10n.done),
+          ),
         ],
       ),
     );
@@ -802,9 +830,10 @@ class _SlotRow extends StatelessWidget {
       decoration: BoxDecoration(
         color: filled ? green.withValues(alpha: 0.12) : elevated,
         border: Border.all(
-          color: filled
-              ? green.withValues(alpha: 0.4)
-              : isActive
+          color:
+              filled
+                  ? green.withValues(alpha: 0.4)
+                  : isActive
                   ? green.withValues(alpha: 0.5)
                   : borderColor.withValues(alpha: 0.4),
         ),
