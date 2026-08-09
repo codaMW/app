@@ -143,6 +143,7 @@ void main() {
         getConfirmed: () async => confirmed,
         setConfirmed: (v) async => confirmed = v,
         resetConfirmed: () async => confirmed = false,
+        isWebOverride: false,
       );
     }
 
@@ -169,6 +170,7 @@ void main() {
           getConfirmed: () async => confirmed,
           setConfirmed: (v) async => confirmed = v,
           resetConfirmed: () async => confirmed = false,
+          isWebOverride: false,
         );
         await notifier.load();
 
@@ -176,6 +178,31 @@ void main() {
         expect(notifier.state, isTrue);
         final prefs = await _prefs();
         expect(prefs.getBool('backupCompletedMigratedToRust'), isTrue);
+      },
+    );
+
+    test(
+      'load(): concurrent calls run the migration write exactly once',
+      () async {
+        // The constructor fires load() un-awaited; a caller may await load()
+        // before it finishes. Both must share one in-flight future so the
+        // one-time migration calls the bridge exactly once. (#141 review)
+        SharedPreferences.setMockInitialValues({kBackupCompletedKey: true});
+        var setCount = 0;
+        final notifier = BackupCompletedNotifier(
+          getConfirmed: () async => setCount > 0,
+          setConfirmed: (v) async => setCount++,
+          resetConfirmed: () async {},
+          isWebOverride: false,
+        );
+        // Two overlapping loads (plus the un-awaited one from the constructor).
+        await Future.wait([notifier.load(), notifier.load()]);
+        expect(
+          setCount,
+          1,
+          reason: 'migration must write through the bridge exactly once',
+        );
+        expect(notifier.state, isTrue);
       },
     );
 
@@ -191,6 +218,7 @@ void main() {
         getConfirmed: () async => confirmed,
         setConfirmed: (v) async => confirmed = v,
         resetConfirmed: () async => confirmed = false,
+        isWebOverride: false,
       );
       await notifier.markCompleted();
 
@@ -212,6 +240,7 @@ void main() {
         getConfirmed: () async => confirmed,
         setConfirmed: (v) async => confirmed = v,
         resetConfirmed: () async => confirmed = false,
+        isWebOverride: false,
       );
       await notifier.reset();
 

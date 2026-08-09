@@ -184,8 +184,19 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
   /// the legacy key is only ever read once (issue #141).
   static const _kMigratedKey = 'backupCompletedMigratedToRust';
 
-  Future<void> load() async {
-    if (_loaded) return;
+  // Coalesce concurrent load()s: the constructor fires load() un-awaited, and a
+  // caller (or test) may await load() before it finishes. Without sharing the
+  // in-flight future, both could pass the _loaded check, run the one-time
+  // migration, and call _setConfirmed twice. Cleared on completion so a failed
+  // load (which leaves _loaded false) can be retried. (#141 review — CodeRabbit)
+  Future<void>? _loading;
+
+  Future<void> load() {
+    if (_loaded) return Future.value();
+    return _loading ??= _load().whenComplete(() => _loading = null);
+  }
+
+  Future<void> _load() async {
     // The backup-confirmed flag now lives in the Rust identity record. On the
     // first run after upgrading, copy the legacy SharedPreferences value into
     // Rust once, then read from Rust exclusively.
