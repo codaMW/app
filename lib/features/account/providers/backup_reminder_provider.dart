@@ -123,12 +123,16 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
     Future<bool> Function()? getConfirmed,
     Future<void> Function(bool confirmed)? setConfirmed,
     Future<void> Function()? resetConfirmed,
+    // Test seam: force the web (SharedPreferences-authoritative) path off-web.
+    // Defaults to the real platform flag.
+    bool? isWebOverride,
   }) : _getConfirmed = getConfirmed ?? identity_api.getBackupConfirmed,
        _setConfirmed =
            setConfirmed ??
            ((confirmed) =>
                identity_api.setBackupConfirmed(confirmed: confirmed)),
        _resetConfirmed = resetConfirmed ?? identity_api.resetBackupConfirmation,
+       _isWeb = isWebOverride ?? kIsWeb,
        super(initialValue ?? false) {
     if (initialValue == null) {
       load();
@@ -140,6 +144,39 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
   final Future<bool> Function() _getConfirmed;
   final Future<void> Function(bool confirmed) _setConfirmed;
   final Future<void> Function() _resetConfirmed;
+  final bool _isWeb;
+
+  // Web has no durable Rust identity store until #233, but SharedPreferences
+  // (backed by localStorage) IS durable there. So on web the backup-confirmed
+  // flag is read/written/cleared directly in kBackupCompletedKey, and the Rust
+  // bridge is used only on native. This keeps a confirmed backup surviving a
+  // page reload on web, instead of resetting to the session-only Rust default.
+  // (#141 review — CodeRabbit)
+  Future<bool> _readConfirmed() async {
+    if (_isWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(kBackupCompletedKey) ?? false;
+    }
+    return _getConfirmed();
+  }
+
+  Future<void> _writeConfirmed(bool confirmed) async {
+    if (_isWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(kBackupCompletedKey, confirmed);
+      return;
+    }
+    await _setConfirmed(confirmed);
+  }
+
+  Future<void> _clearConfirmed() async {
+    if (_isWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(kBackupCompletedKey, false);
+      return;
+    }
+    await _resetConfirmed();
+  }
 
   bool _loaded = false;
 
@@ -161,7 +198,7 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
       // re-arming the reminder on every reload. Until IndexedDB save_identity
       // lands (#233), the legacy SharedPreferences flag stays authoritative on
       // web, so we neither migrate nor mark it migrated.
-      if (!kIsWeb) {
+      if (!_isWeb) {
         final prefs = await SharedPreferences.getInstance();
         final migrated = prefs.getBool(_kMigratedKey) ?? false;
         if (!migrated) {
@@ -182,8 +219,8 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
           await prefs.setBool(_kMigratedKey, true);
         }
       }
-      state = await _getConfirmed();
-      // Only mark loaded once the Rust read succeeded. If the bridge was not
+      state = await _readConfirmed();
+      // Only mark loaded once the read succeeded. If the bridge was not
       // ready (no identity yet), leaving _loaded false lets the next load()
       // retry instead of pinning the UI to `false` for the whole session.
       _loaded = true;
@@ -200,7 +237,7 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
   /// record, #141).
   Future<void> markCompleted() async {
     await load();
-    await _setConfirmed(true);
+    await _writeConfirmed(true);
     state = true;
   }
 
@@ -208,7 +245,7 @@ class BackupCompletedNotifier extends StateNotifier<bool> {
   /// side is also reset in `create_identity`; this keeps the UI in sync (#141).
   Future<void> reset() async {
     await load();
-    await _resetConfirmed();
+    await _clearConfirmed();
     state = false;
   }
 }
