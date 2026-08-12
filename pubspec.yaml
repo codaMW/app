@@ -101,4 +101,5 @@ flutter:
 
   assets:
     - assets/data/fiat.json
+    - assets/data/payment_methods.json
     - assets/images/

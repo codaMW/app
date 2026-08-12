@@ -119,7 +119,14 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(l10n.accountScreenTitle)),
       body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        // #267: bottom system-bar inset so the Import/Refresh row and last
+        // item clear the gesture / 3-button navigation bar.
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg + MediaQuery.of(context).viewPadding.bottom,
+        ),
         children: [
           // ── Backup ritual banner — entry point for the 3-step backup
           // flow while the backup reminder is active.

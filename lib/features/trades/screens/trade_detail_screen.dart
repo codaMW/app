@@ -17,6 +17,7 @@ import 'package:mostro/features/disputes/providers/disputes_providers.dart';
 import 'package:mostro/features/home/providers/home_order_providers.dart';
 import 'package:mostro/features/order/providers/trade_state_provider.dart';
 import 'package:mostro/features/trades/providers/trades_providers.dart';
+import 'package:mostro/features/trades/widgets/dispute_confirmation_dialog.dart';
 import 'package:mostro/features/trades/widgets/release_confirmation_dialog.dart';
 import 'package:mostro/shared/utils/platform_int64.dart';
 import 'package:mostro/shared/widgets/mostro_reactive_button.dart';
@@ -234,6 +235,13 @@ class _TradeDetailScreenState extends ConsumerState<TradeDetailScreen> {
   /// Open a dispute for this trade, upsert into the local dispute notifier,
   /// and navigate to the dispute chat.
   Future<void> _openDispute() async {
+    // #280: a dispute escalates to an admin and cannot be undone, so confirm
+    // first — matching the release and cancel actions in the same row.
+    final confirmed = await showDisputeConfirmationDialog(context);
+    if (!mounted) return;
+    if (confirmed != true) {
+      throw const MostroActionAborted();
+    }
     try {
       final dispute = await disputes_api.openDispute(tradeId: widget.orderId);
       if (!mounted) return;
@@ -509,7 +517,14 @@ class _TradeDetailScreenState extends ConsumerState<TradeDetailScreen> {
         actions: [_buildOverflowMenu()],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        // #267: add the bottom system-bar inset so the last item isn't hidden
+        // behind the gesture / 3-button navigation bar.
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg + MediaQuery.of(context).viewPadding.bottom,
+        ),
         children: [
           // Persistent chat chip — always-on access to the counterpart.
           if (inFlight) ...[

@@ -232,7 +232,14 @@ class _PayLightningInvoiceScreenState
         return Scaffold(
           appBar: AppBar(title: Text(l10n.payLightningInvoiceTitle)),
           body: Padding(
-            padding: const EdgeInsets.all(AppSpacing.lg),
+            // #267: bottom system-bar inset so the Cancel button clears the
+            // gesture / 3-button navigation bar.
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.lg + MediaQuery.of(context).viewPadding.bottom,
+            ),
             child: Column(
               children: [
                 // Info card with QR

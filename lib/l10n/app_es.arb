@@ -225,8 +225,8 @@
   "confirmReleaseSatsButton": "Confirmar y liberar sats",
   "shareOrderButton": "Compartir orden",
 
-  "orderPillYouAreSelling": "USTED ESTÁ VENDIENDO",
-  "orderPillYouAreBuying": "USTED ESTÁ COMPRANDO",
+  "orderPillYouAreSelling": "ESTÁS VENDIENDO",
+  "orderPillYouAreBuying": "ESTÁS COMPRANDO",
   "orderPillSelling": "VENDIENDO",
   "orderPillBuying": "COMPRANDO",
 
@@ -343,6 +343,8 @@
   "aboutBondClaimWindowExplanation": "El tiempo que tiene la contraparte afectada para enviar una factura Lightning y reclamar su parte de una fianza confiscada.",
   "aboutBondClaimWindowValue": "{count, plural, =1{{count} día} other{{count} días}}",
   "openDisputeFailed": "No se pudo abrir la disputa. Por favor, inténtelo de nuevo.",
+  "openDisputeTitle": "Abrir disputa",
+  "openDisputeConfirmation": "¿Seguro que quieres abrir una disputa? Esto escala la operación a un administrador y no se puede deshacer.",
   "tradeNotDisputable": "Solo se puede abrir una disputa cuando los fondos ya están bloqueados para este intercambio.",
   "tradeWaitingInvoiceBuyerInstruction": "Envía tu factura Lightning para que el vendedor pueda bloquear los fondos.",
   "tradeWaitingInvoiceSellerInstruction": "Esperando a que el comprador envíe su factura Lightning.",

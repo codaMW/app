@@ -308,6 +308,13 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      // #280: opening a dispute now confirms first — tap Yes to reach
+      // the bridge call, mirroring the release/cancel confirmation flow.
+      final confirmLabel = AppLocalizationsEn().yesButtonLabel;
+      expect(find.text(confirmLabel), findsOneWidget);
+      await tester.tap(find.text(confirmLabel));
+      await tester.pump();
+      await tester.pump();
       expect(tester.takeException(), isNull);
       expect(
         find.text('Could not open dispute. Please try again.'),

@@ -34,7 +34,14 @@ class WalletSettingsScreen extends ConsumerWidget {
         ),
       ),
       body: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        // #267: bottom system-bar inset so the Disconnect/Connect button clears
+        // the gesture / 3-button navigation bar.
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg + MediaQuery.of(context).viewPadding.bottom,
+        ),
         child: wallet == null
             ? _DisconnectedView(green: green, cardBg: cardBg, theme: theme, colors: colors)
             : _ConnectedView(

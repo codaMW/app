@@ -113,7 +113,14 @@ class _ConnectWalletScreenState extends ConsumerState<ConnectWalletScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(l10n.connectWalletTitle)),
       body: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        // #267: bottom system-bar inset so the Connect button clears the
+        // gesture / 3-button navigation bar.
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg + MediaQuery.of(context).viewPadding.bottom,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

@@ -249,7 +249,14 @@ class _AddLightningInvoiceScreenState
     return Scaffold(
       appBar: AppBar(title: Text(l10n.addInvoiceTitle)),
       body: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        // #267: bottom system-bar inset so the Cancel/Submit row clears the
+        // gesture / 3-button navigation bar.
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg + MediaQuery.of(context).viewPadding.bottom,
+        ),
         child: Column(
           children: [
             // Info card

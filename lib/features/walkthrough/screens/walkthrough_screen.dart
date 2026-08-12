@@ -74,6 +74,14 @@ class WalkthroughScreen extends ConsumerWidget {
         shape: const CircleBorder(),
       ),
       globalBackgroundColor: theme.scaffoldBackgroundColor,
+      // #267: pad the Skip/Back/Next/Done controls past the bottom system bar.
+      // The package's default controlsPadding has no bottom inset.
+      controlsPadding: EdgeInsets.fromLTRB(
+        16.0,
+        16.0,
+        16.0,
+        16.0 + MediaQuery.of(context).viewPadding.bottom,
+      ),
     );
   }
 

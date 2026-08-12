@@ -343,6 +343,8 @@
   "aboutBondClaimWindowExplanation": "Il tempo a disposizione della controparte danneggiata per inviare una fattura Lightning e richiedere la propria quota di una cauzione incamerata.",
   "aboutBondClaimWindowValue": "{count, plural, =1{{count} giorno} other{{count} giorni}}",
   "openDisputeFailed": "Impossibile aprire la disputa. Riprovare.",
+  "openDisputeTitle": "Apri contestazione",
+  "openDisputeConfirmation": "Sei sicuro di voler aprire una contestazione? Questo inoltra lo scambio a un amministratore e non può essere annullato.",
   "tradeNotDisputable": "Una disputa può essere aperta solo quando i fondi sono bloccati per questo scambio.",
   "tradeWaitingInvoiceBuyerInstruction": "Invia la tua fattura Lightning per permettere al venditore di bloccare i fondi.",
   "tradeWaitingInvoiceSellerInstruction": "In attesa che il compratore invii la propria fattura Lightning.",

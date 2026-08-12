@@ -343,6 +343,8 @@
   "aboutBondClaimWindowExplanation": "Wie lange die betroffene Gegenpartei Zeit hat, eine Lightning-Rechnung einzureichen und ihren Anteil an einer eingezogenen Kaution anzufordern.",
   "aboutBondClaimWindowValue": "{count, plural, =1{{count} Tag} other{{count} Tage}}",
   "openDisputeFailed": "Streit konnte nicht eröffnet werden. Bitte erneut versuchen.",
+  "openDisputeTitle": "Streitfall eröffnen",
+  "openDisputeConfirmation": "Möchtest du wirklich einen Streitfall eröffnen? Dies eskaliert den Handel an einen Administrator und kann nicht rückgängig gemacht werden.",
   "tradeNotDisputable": "Ein Streit kann erst eröffnet werden, wenn die Gelder für diesen Handel gesperrt sind.",
   "tradeWaitingInvoiceBuyerInstruction": "Sende deine Lightning-Rechnung, damit der Verkäufer die Gelder sperren kann.",
   "tradeWaitingInvoiceSellerInstruction": "Warte auf die Lightning-Rechnung des Käufers.",
