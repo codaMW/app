@@ -11,8 +11,8 @@
 use anyhow::{anyhow, bail, Result};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use tokio::sync::{broadcast, RwLock};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::api::types::{Dispute, DisputeResolution, DisputeStatus, OrderStatus};
 use crate::db::Storage;
@@ -35,7 +35,9 @@ impl DisputeStore {
         }
     }
 
-    #[allow(dead_code)]
+    // Test-only helper: production rehydration uses upsert_or_update for its
+    // one-lock create-if-absent semantics; only tests seed a record directly.
+    #[cfg(test)]
     async fn upsert(&self, dispute: Dispute) {
         {
             let mut store = self.disputes.write().await;
@@ -224,13 +226,10 @@ pub async fn open_dispute(trade_id: String, reason: Option<String>) -> Result<Di
         .ok_or_else(|| anyhow!("TradeNotDisputable: no trade key for trade {trade_id}"))?;
 
     let event_json: String = async {
-        let sender_keys =
-            crate::api::identity::get_active_trade_keys(trade_index).await?;
-        let identity_keys =
-            crate::api::identity::get_transport_identity_keys(&sender_keys).await?;
-        let mostro_pubkey =
-            nostr_sdk::PublicKey::from_hex(&crate::config::active_mostro_pubkey())
-                .map_err(|e| anyhow!("invalid mostro pubkey: {e}"))?;
+        let sender_keys = crate::api::identity::get_active_trade_keys(trade_index).await?;
+        let identity_keys = crate::api::identity::get_transport_identity_keys(&sender_keys).await?;
+        let mostro_pubkey = nostr_sdk::PublicKey::from_hex(&crate::config::active_mostro_pubkey())
+            .map_err(|e| anyhow!("invalid mostro pubkey: {e}"))?;
         crate::mostro::actions::dispute(
             &identity_keys,
             &sender_keys,
@@ -494,18 +493,30 @@ async fn clear_admin_pubkey(order_id: &str) {
 /// arm in `orders.rs`, which does not route them into the dispute store, so the
 /// trade row is the durable evidence that the dispute is over.
 fn is_order_finished(status: &OrderStatus) -> bool {
-    matches!(
-        status,
-        OrderStatus::SettledByAdmin
-            | OrderStatus::CanceledByAdmin
-            | OrderStatus::CompletedByAdmin
-            | OrderStatus::Success
-            | OrderStatus::Canceled
-            | OrderStatus::CooperativelyCanceled
-            | OrderStatus::Expired
-    )
+    // Exhaustive on purpose (PR #256 review): a terminal variant added later
+    // must not silently fall through as "live" and resurrect a closed dispute
+    // on every restart. Naming every variant forces that classification at
+    // compile time instead.
+    match status {
+        // Terminal — the trade is over, so any stored solver key is stale.
+        OrderStatus::Success
+        | OrderStatus::Canceled
+        | OrderStatus::Expired
+        | OrderStatus::CooperativelyCanceled
+        | OrderStatus::CanceledByAdmin
+        | OrderStatus::SettledByAdmin
+        | OrderStatus::CompletedByAdmin => true,
+        // Live — the dispute may still be active, so keep the solver key.
+        OrderStatus::Pending
+        | OrderStatus::WaitingBuyerInvoice
+        | OrderStatus::WaitingPayment
+        | OrderStatus::Active
+        | OrderStatus::FiatSent
+        | OrderStatus::SettledHoldInvoice
+        | OrderStatus::Dispute
+        | OrderStatus::InProgress => false,
+    }
 }
-
 
 /// Derive the dispute-chat keys for `trade_id` and start listening.
 ///
@@ -553,14 +564,6 @@ async fn derive_admin_shared_key(trade_id: &str, admin_pubkey_hex: &str) -> Resu
     Ok(())
 }
 
-/// Re-arm the dispute-chat listener of every in-review dispute with a known
-/// solver. Called when the relay pool comes (back) online, mirroring
-/// `resubscribe_active_chats` for the peer channel (PR #254 review): listener
-/// startup is best-effort at assignment time and can fail while keys or
-/// connectivity are not there yet, and without a rearm path solver replies
-/// would stay invisible for the rest of the process. Idempotent — the
-/// per-channel single-owner guard makes a spawn for an already-listening
-/// dispute a no-op.
 /// Rebuild dispute records for orders with a persisted solver pubkey.
 ///
 /// Trades are the enumeration source, so no key-prefix scan is needed: each
@@ -571,6 +574,11 @@ async fn derive_admin_shared_key(trade_id: &str, admin_pubkey_hex: &str) -> Resu
 /// later resolution arrives as a daemon event. Restoring the record is what
 /// lets `submit_evidence` work again after a restart, since it refuses without
 /// one. Only *unfinished* trades are restored — see [`is_order_finished`].
+///
+/// `initiated_by_me` cannot be restored — it is only ever in memory (set at
+/// open time, never persisted), so a rehydrated record defaults it to `false`.
+/// That default is not authoritative: callers must not read it as "the
+/// counterparty opened this". Tracked as a follow-up (see the field comment).
 ///
 /// **Web has no rehydration.** `lib/main.dart` skips `initDb` off native, and
 /// the IndexedDB store's `list_trades` is still the empty stub of #233, so both
@@ -591,9 +599,6 @@ async fn rehydrate_disputes_from_storage() {
 
     for trade in trades {
         let order_id = trade.order.id.clone();
-        if dispute_store().get(&order_id).await.is_some() {
-            continue;
-        }
         let admin_hex = match db
             .get_setting(&crate::db::settings_keys::dispute_admin(&order_id))
             .await
@@ -619,27 +624,52 @@ async fn rehydrate_disputes_from_storage() {
             continue;
         }
 
-        dispute_store()
-            .upsert(Dispute {
-                id: uuid::Uuid::new_v4().to_string(),
-                trade_id: order_id.clone(),
-                status: DisputeStatus::InReview,
-                initiated_by_me: false,
-                reason: None,
-                admin_pubkey: Some(admin_hex),
-                resolution: None,
-                opened_at: unix_now(),
-                resolved_at: None,
-                // The pre-restart read state is not recoverable, and this is
-                // an active dispute waiting on the user — default to unread so
-                // it surfaces rather than being silently marked as seen.
-                is_read: false,
-            })
-            .await;
+        let make = || Dispute {
+            id: uuid::Uuid::new_v4().to_string(),
+            trade_id: order_id.clone(),
+            status: DisputeStatus::InReview,
+            // NOT recoverable after a restart: the opener flag lives only in
+            // the in-memory record (set at open_dispute time, never persisted —
+            // unlike the solver pubkey, which persist_admin_pubkey stores). A
+            // rehydrated record therefore cannot know who opened the dispute
+            // and conservatively reports false; callers must NOT treat this as
+            // an authoritative "the counterparty opened it". Persisting the
+            // flag (or an origin-unknown UI state) is tracked as a follow-up,
+            // to land with the dispute-UI wiring. (PR #256 review)
+            initiated_by_me: false,
+            reason: None,
+            admin_pubkey: Some(admin_hex),
+            resolution: None,
+            opened_at: unix_now(),
+            resolved_at: None,
+            // The pre-restart read state is not recoverable, and this is an
+            // active dispute waiting on the user — default to unread so it
+            // surfaces rather than being silently marked as seen.
+            is_read: false,
+        };
+        // Atomic create-if-absent under one write lock: a record already in
+        // memory (a fresh open_dispute or admin-took-dispute landing during
+        // startup) wins, so its initiator metadata is never clobbered by this
+        // rehydration. No check-then-act (PR #256 review).
+        if let Err(e) = dispute_store()
+            .upsert_or_update(&order_id, make, |_| Ok(()))
+            .await
+        {
+            log::warn!("[disputes] rehydrate: upsert_or_update for {order_id}: {e}");
+            continue;
+        }
         log::info!("[disputes] rehydrated dispute record order={order_id}");
     }
 }
 
+/// Re-arm the dispute-chat listener of every in-review dispute with a known
+/// solver. Called when the relay pool comes (back) online, mirroring
+/// `resubscribe_active_chats` for the peer channel (PR #254 review): listener
+/// startup is best-effort at assignment time and can fail while keys or
+/// connectivity are not there yet, and without a rearm path solver replies
+/// would stay invisible for the rest of the process. Idempotent — the
+/// per-channel single-owner guard makes a spawn for an already-listening
+/// dispute a no-op.
 pub(crate) async fn resubscribe_active_dispute_chats() {
     // A restart leaves the in-memory store empty, so the loop below would find
     // nothing to re-arm. Refill it from the persisted solver pubkeys first —
@@ -815,8 +845,8 @@ mod tests {
         // The solver pubkey must not go with it: it arrives once, in
         // admin-took-dispute, and without it the chat keys cannot be derived
         // again — the party would be left unable to reach the solver.
-        let path = std::env::temp_dir()
-            .join(format!("mostro_dispute_kv_{}.db", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("mostro_dispute_kv_{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let db = crate::db::sqlite::SqliteStorage::open(path.to_str().unwrap())
             .await
@@ -835,7 +865,10 @@ mod tests {
         let db = crate::db::sqlite::SqliteStorage::open(path.to_str().unwrap())
             .await
             .unwrap();
-        assert_eq!(db.get_setting(&key).await.unwrap().as_deref(), Some(admin_pk));
+        assert_eq!(
+            db.get_setting(&key).await.unwrap().as_deref(),
+            Some(admin_pk)
+        );
 
         drop(db);
         let _ = std::fs::remove_file(&path);
@@ -893,8 +926,16 @@ mod tests {
         // `init_db` is a OnceCell: the first test to call it wins, and any
         // SqliteStorage serves — this asserts about its own order ids only, so
         // rows other tests may have left behind are irrelevant.
-        let path = std::env::temp_dir()
-            .join(format!("mostro_dispute_rehydrate_{}.db", std::process::id()));
+        //
+        // Deliberately no remove_file cleanup: unlike the sibling test (which
+        // opens its own private SqliteStorage), this file may back the shared
+        // OnceCell connection the rest of the suite uses, so deleting it mid-run
+        // breaks unrelated tests. The leaked temp file is the same harmless
+        // artifact the OnceCell caveat already covers.
+        let path = std::env::temp_dir().join(format!(
+            "mostro_dispute_rehydrate_{}.db",
+            std::process::id()
+        ));
         let _ = crate::db::app_db::init_db(path.to_str().unwrap()).await;
         let Some(db) = crate::db::app_db::db() else {
             panic!("no store: rehydration cannot be exercised");
@@ -935,7 +976,10 @@ mod tests {
         let restored = get_dispute(live.clone()).await.unwrap().expect("restored");
         assert_eq!(restored.status, DisputeStatus::InReview);
         assert_eq!(restored.admin_pubkey.as_deref(), Some(stored_solver));
-        assert!(!restored.is_read, "an active dispute must surface as unread");
+        assert!(
+            !restored.is_read,
+            "an active dispute must surface as unread"
+        );
 
         // 2. The finished one did not, and its stale key is gone — otherwise
         //    every later restart resurrects it as InReview.
@@ -1012,7 +1056,10 @@ mod tests {
             .await
             .unwrap();
 
-        let dispute = get_dispute(trade_id).await.unwrap().expect("record created");
+        let dispute = get_dispute(trade_id)
+            .await
+            .unwrap()
+            .expect("record created");
         assert_eq!(dispute.admin_pubkey.as_deref(), Some(admin_pk));
         assert_eq!(dispute.status, DisputeStatus::InReview);
         assert!(!dispute.initiated_by_me);
@@ -1056,7 +1103,10 @@ mod tests {
             .await
             .expect("the placeholder must be claimed, not rejected");
 
-        assert!(stored.initiated_by_me, "initiator metadata must be restored");
+        assert!(
+            stored.initiated_by_me,
+            "initiator metadata must be restored"
+        );
         assert_eq!(stored.reason.as_deref(), Some("no payment"));
         assert_eq!(
             stored.status,
@@ -1200,16 +1250,27 @@ mod tests {
         let trade_id = format!("t-{}", uuid::Uuid::new_v4());
         seed_dispute(&trade_id, None).await;
         // Generator point G — a known valid secp256k1 pubkey.
-        let fake_admin_pk =
-            "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        let fake_admin_pk = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
         // No trade key registered for trade_id → trade_key_for_order returns
         // None → derivation returns Err → logged as warning, not propagated.
         let result = handle_admin_took_dispute(trade_id.clone(), fake_admin_pk.into()).await;
-        assert!(result.is_ok(), "expected Ok(()) despite derivation failure, got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "expected Ok(()) despite derivation failure, got: {:?}",
+            result
+        );
 
         let d = get_dispute(trade_id).await.unwrap().unwrap();
-        assert_eq!(d.status, DisputeStatus::InReview, "dispute must be InReview after admin took it");
-        assert_eq!(d.admin_pubkey.as_deref(), Some(fake_admin_pk), "admin pubkey must be stored");
+        assert_eq!(
+            d.status,
+            DisputeStatus::InReview,
+            "dispute must be InReview after admin took it"
+        );
+        assert_eq!(
+            d.admin_pubkey.as_deref(),
+            Some(fake_admin_pk),
+            "admin pubkey must be stored"
+        );
     }
 
     #[tokio::test]
